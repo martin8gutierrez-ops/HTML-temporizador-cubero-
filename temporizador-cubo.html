@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Temporizador de cubo</title>
+<style>
+:root{--bg:#f2f2ee;--fg:#15171c}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font-family:system-ui,Roboto,sans-serif;min-height:100dvh;
+display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.8rem;text-align:center;
+user-select:none;-webkit-user-select:none;touch-action:manipulation;transition:background .15s;
+padding:max(1rem,env(safe-area-inset-top)) 1rem max(1rem,env(safe-area-inset-bottom))}
+body[data-t]{--bg:#0f1115;--fg:#eceff4}
+body.insp{--bg:#f5a623;--fg:#15171c}
+body.run{--bg:#1f9d55;--fg:#fff}
+body.done{--bg:#1d4ed8;--fg:#fff}
+body[data-hold=wait]{--bg:#dc2626;--fg:#fff}
+body.insp,body.run{touch-action:none}
+body[data-hold=ready]{--bg:#1f9d55;--fg:#fff}
+button{font:inherit;color:inherit;cursor:pointer}
+.tabs{display:flex;flex-wrap:wrap;justify-content:center;gap:.35rem}
+.tabs button{font-weight:700;font-size:.9rem;background:none;border:2px solid currentColor;border-radius:999px;padding:.3rem .8rem;opacity:.55}
+.tabs button.on{opacity:1;background:var(--fg);color:var(--bg)}
+body.insp .tabs,body.run .tabs{pointer-events:none}
+#time{font-size:calc(clamp(4.5rem,24vw,10rem)*var(--z,1));font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+#msg{font-size:1.1rem;font-weight:600}
+#mezcla{font-size:clamp(1rem,4.6vw,1.4rem);font-weight:700;letter-spacing:.04em;line-height:1.5;max-width:30rem;word-spacing:.3em;white-space:pre-line}
+body.insp #mezcla,body.run #mezcla,body.insp #dibujo,body.run #dibujo{visibility:hidden}
+#acciones{display:none;gap:.4rem;flex-wrap:wrap;justify-content:center}
+body.done #acciones{display:flex}
+.b{background:none;border:2px solid currentColor;border-radius:8px;padding:.4rem .8rem;margin:.15rem;font-weight:700}
+#extras{width:100%;max-width:24rem;display:flex;flex-direction:column;align-items:center;gap:.5rem}
+body.insp #extras,body.run #extras{display:none}
+#stats{font-size:1rem;font-weight:700}
+#lista{margin:0;padding:0;list-style:none;opacity:.85}
+#grafica{width:100%;max-width:300px;height:90px}
+.s{font-size:.85rem;background:none;border:none;text-decoration:underline;opacity:.7;padding:.3rem}
+#panel{width:100%}
+.h{display:flex;justify-content:space-between;align-items:center;text-align:left}
+#panel .l{max-height:14rem;overflow:auto}
+.an{font-size:1.3rem;font-weight:800;margin:.4rem 0}
+.ax{min-height:3rem;margin-bottom:.4rem}
+#bk{width:100%;height:6rem;font-size:.75rem;user-select:text;-webkit-user-select:text}
+</style>
+</head>
+<body>
+<div class="tabs" id="tabs" data-no-tap></div>
+<div id="time">0.00</div>
+<div id="msg"></div>
+<div id="mezcla"></div>
+<canvas id="dibujo" width="200" height="150"></canvas>
+<div id="acciones">
+  <button class="b" id="bP2" data-no-tap>+2</button>
+  <button class="b" id="bDnf" data-no-tap>DNF</button>
+  <button class="b" id="bDel" data-no-tap>Borrar último</button>
+</div>
+<div id="extras">
+  <div id="stats"></div>
+  <ul id="lista"></ul>
+  <canvas id="grafica" width="300" height="90"></canvas>
+  <div id="links" data-no-tap></div>
+  <div id="panel" data-no-tap></div>
+</div>
+
+<script>
+(() => {
+  const KEY = 'cubo-records-v2', MAXH = 500;
+  const M3 = ['', "'", '2'], W = ['U','D','R','L','F','B','Uw','Dw','Rw','Lw','Fw','Bw'];
+  const E6 = {U:0,D:0,R:1,L:1,F:2,B:2};
+  const CFG = {
+    '3x3': { c: W.slice(0,6), n: 20, m: M3, e: E6, s: 3 },
+    '2x2': { c: ['U','R','F'], n: 10, m: M3, e: {U:0,R:1,F:2}, s: 2 },
+    '4x4': { c: W, n: 40, m: M3, e: E6, s: 4 },
+    '5x5': { c: W, n: 60, m: M3, e: E6, s: 5 },
+    'Pyraminx': { c: ['U','L','R','B'], n: 10, m: ['', "'"], e: {U:0,L:1,R:2,B:3}, tips: 1 },
+    'Skewb': { c: ['U','R','L','B'], n: 11, m: ['', "'"], e: {U:0,R:1,L:2,B:3} },
+    'Megaminx': { mega: 1 },
+    '3x3 OH': { c: W.slice(0,6), n: 20, m: M3, e: E6, s: 3 }
+  };
+  const CATS = Object.keys(CFG);
+  const ALGS = [
+    ['Cruz OLL (línea)', 'F R U R\' U\' F\''], ['OLL en L', 'F U R U\' R\' F\''],
+    ['OLL punto', 'F R U R\' U\' F\' f R U R\' U\' f\''], ['Sune', 'R U R\' U R U2 R\''],
+    ['Anti-Sune', 'R U2 R\' U\' R U\' R\''], ['PLL T', 'R U R\' U\' R\' F R2 U\' R\' U\' R U R\' F\''],
+    ['PLL Y', 'F R U\' R\' U\' R U R\' F\' R U R\' U\' R\' F R F\''], ['PLL Ua', 'R U\' R U R U R U\' R\' U\' R2'],
+    ['PLL Ub', 'R2 U R U R\' U\' R\' U\' R\' U R\''], ['PLL H', 'M2 U M2 U2 M2 U M2'],
+    ['PLL Z', 'M\' U M2 U M2 U M\' U2 M2'], ['PLL Jb', 'R U R\' F\' R U R\' U\' R\' F R2 U\' R\' U\'']
+  ];
+  const $ = id => document.getElementById(id);
+  const body = document.body, timeEl = $('time'), msgEl = $('msg');
+  let estado = 'idle', cat = '3x3', t0 = 0, raf = 0, swallow = false, ac = null;
+  let holdT = 0, ready = false, holding = false, pa = '', ai = 0, ashow = false;
+
+  /* ---------- datos ---------- */
+  const g = { i: 15, k: 0, z: 1, t: 0 };
+  const datos = { s: 1, g, c: Object.fromEntries(CATS.map(c => [c, []])) };
+  function aplicar(d) {
+    if (d.s !== undefined) datos.s = d.s ? 1 : 0;
+    if (d.g) Object.keys(g).forEach(k => { if (typeof d.g[k] === 'number') g[k] = d.g[k]; });
+    CATS.forEach(c => {
+      if (d.c && Array.isArray(d.c[c])) datos.c[c] = d.c[c].filter(t => t && typeof t.ms === 'number')
+        .map(t => ({ ms: t.ms, p: t.p === 2 ? 2 : t.p === 'D' ? 'D' : 0, d: t.d || 0 })).slice(0, MAXH);
+    });
+  }
+  function cargar() {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) return aplicar(JSON.parse(raw));
+      const v1 = JSON.parse(localStorage.getItem('cubo-records-v1') || 'null');
+      if (v1) ['3x3', '2x2'].forEach(c => { if (v1[c]?.times) datos.c[c] = v1[c].times.map(ms => ({ ms, p: 0, d: 0 })); });
+    } catch (e) {}
+  }
+  const guardar = () => { try { localStorage.setItem(KEY, JSON.stringify(datos)); } catch (e) {} };
+  function cfg() {
+    body.toggleAttribute('data-t', !!g.t);
+    body.style.setProperty('--z', g.z);
+    if (estado === 'idle') msgEl.textContent = msgIdle();
+  }
+  const msgIdle = () => g.i ? 'Toca para empezar la inspección' : g.k ? 'Mantén y suelta para resolver' : 'Toca para resolver';
+
+  /* ---------- tiempos ---------- */
+  const eff = t => t.p === 'D' ? Infinity : t.ms + (t.p === 2 ? 2000 : 0);
+  const f = x => x == null ? '—' : x === Infinity ? 'DNF' : (x / 1000).toFixed(2);
+  const txt = t => t.p === 'D' ? 'DNF' : f(eff(t)) + (t.p === 2 ? '+' : '');
+  const fin = a => a.map(eff).filter(x => x !== Infinity);
+  const mejor = a => { const v = fin(a); return v.length ? Math.min(...v) : null; };
+  const media = a => { const v = fin(a); return v.length ? v.reduce((x, y) => x + y, 0) / v.length : null; };
+  function ao(a, n) {
+    if (a.length < n) return null;
+    let v = a.slice(0, n).map(eff).sort((x, y) => x - y);
+    if (v[n - 2] === Infinity) return Infinity;
+    v = v.slice(1, n - 1);
+    return v.reduce((x, y) => x + y, 0) / v.length;
+  }
+  function mejorAo(a, n) {
+    let m = null;
+    for (let i = 0; i + n <= a.length; i++) { const v = ao(a.slice(i), n); if (v !== null && v !== Infinity && (m === null || v < m)) m = v; }
+    return m;
+  }
+
+  /* ---------- sonido ---------- */
+  const vibrar = p => { try { navigator.vibrate?.(p); } catch (e) {} };
+  function audioInit() { try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); ac.resume?.(); } catch (e) {} }
+  function aviso(texto, fr) {
+    vibrar([120, 80, 120]);
+    if (!datos.s) return;
+    try {
+      const o = ac.createOscillator(), gn = ac.createGain();
+      o.frequency.value = fr; gn.gain.value = 0.3; o.connect(gn); gn.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + 0.18);
+    } catch (e) {}
+    try { const u = new SpeechSynthesisUtterance(texto); u.lang = 'es-ES'; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch (e) {}
+  }
+
+  /* ---------- mezcla y dibujo ---------- */
+  function mezcla() {
+    const k = CFG[cat]; let mov = [];
+    if (k.mega) {
+      const r = () => Math.random() < .5;
+      const lin = () => Array.from({ length: 10 }, (_, i) => (i % 2 ? 'D' : 'R') + (r() ? '++' : '--')).join(' ') + (r() ? ' U' : " U'");
+      $('mezcla').textContent = Array.from({ length: 7 }, lin).join('\n');
+      return dibujo([]);
+    }
+    while (mov.length < k.n) {
+      const cara = k.c[Math.floor(Math.random() * k.c.length)], n = mov.length, ej = k.e[cara[0]];
+      if (n > 0 && mov[n - 1][0] === cara[0]) continue;
+      if (n > 1 && k.e[mov[n - 1][0]] === ej && k.e[mov[n - 2][0]] === ej) continue;
+      mov.push(cara + k.m[Math.floor(Math.random() * k.m.length)]);
+    }
+    if (k.tips) ['l', 'r', 'u', 'b'].forEach(t => { const x = Math.floor(Math.random() * 3); if (x) mov.push(t + (x === 2 ? "'" : '')); });
+    $('mezcla').textContent = mov.join(' ');
+    dibujo(mov);
+  }
+  function dibujo(mov) {
+    const k = CFG[cat], cv = $('dibujo'), cx = cv.getContext('2d');
+    cx.clearRect(0, 0, 200, 150); cv.hidden = !k.s;
+    if (!k.s) return;
+    const n = k.s, r = Array.from({ length: n }, (_, i) => -(n - 1) + 2 * i), st = [];
+    const col = { '0,1,0': '#fff', '0,-1,0': '#ffd500', '0,0,1': '#009b48', '0,0,-1': '#0046ad', '1,0,0': '#b71234', '-1,0,0': '#ff5800' };
+    [[0,1,0],[0,-1,0],[0,0,1],[0,0,-1],[1,0,0],[-1,0,0]].forEach(q => r.forEach(u => r.forEach(v => {
+      let w = [u, v]; st.push({ p: q.map(c => c ? c * (n - 1) : w.shift()), q, c: col[q] });
+    })));
+    const rot = (v, ax, t) => { for (; t > 0; t--) { const [x, y, z] = v; v = ax === 0 ? [x, -z, y] : ax === 1 ? [z, y, -x] : [-y, x, z]; } return v; };
+    const AX = { U: 1, D: 1, R: 0, L: 0, F: 2, B: 2 };
+    mov.forEach(m => {
+      const x = /^([UDRLFB])(w?)(['2]?)$/.exec(m); if (!x) return;
+      const ax = AX[x[1]], pos = 'URF'.includes(x[1]), ly = x[2] ? 2 : 1, tt = x[3] === '' ? 1 : x[3] === '2' ? 2 : 3;
+      const veces = pos ? (4 - tt) % 4 : tt, lim = n - 1 - 2 * (ly - 1);
+      st.forEach(s => { if ((pos ? 1 : -1) * s.p[ax] >= lim) { s.p = rot(s.p, ax, veces); s.q = rot(s.q, ax, veces); } });
+    });
+    const c = 48 / n, ix = v => (v + n - 1) / 2, R = i => n - 1 - i;
+    const OFF = { U: [n, 0], L: [0, n], F: [n, n], R: [2 * n, n], B: [3 * n, n], D: [n, 2 * n] };
+    st.forEach(s => {
+      const [x, y, z] = s.p, q = s.q.join(',');
+      const [f, cl, rw] = q === '0,1,0' ? ['U', ix(x), ix(z)] : q === '0,-1,0' ? ['D', ix(x), R(ix(z))] :
+        q === '0,0,1' ? ['F', ix(x), R(ix(y))] : q === '0,0,-1' ? ['B', R(ix(x)), R(ix(y))] :
+        q === '1,0,0' ? ['R', R(ix(z)), R(ix(y))] : ['L', ix(z), R(ix(y))];
+      cx.fillStyle = s.c; cx.fillRect(4 + (OFF[f][0] + cl) * c + .5, 3 + (OFF[f][1] + rw) * c + .5, c - 1, c - 1);
+    });
+  }
+
+  /* ---------- pantalla ---------- */
+  function grafica() {
+    const cx = $('grafica').getContext('2d'); cx.clearRect(0, 0, 300, 90);
+    const v = fin(datos.c[cat].slice(0, 20).reverse());
+    if (v.length < 2) return;
+    const mn = Math.min(...v), r = (Math.max(...v) - mn) || 1;
+    const pt = (x, i) => [8 + i * 284 / (v.length - 1), 80 - (x - mn) / r * 70];
+    cx.strokeStyle = cx.fillStyle = getComputedStyle(body).color; cx.lineWidth = 2; cx.beginPath();
+    v.forEach((x, i) => cx[i ? 'lineTo' : 'moveTo'](...pt(x, i))); cx.stroke();
+    v.forEach((x, i) => { cx.beginPath(); cx.arc(...pt(x, i), 3, 0, 6.3); cx.fill(); });
+  }
+  function pintar() {
+    const a = datos.c[cat];
+    $('stats').textContent = `${cat} · Mejor ${f(mejor(a))} · ao5 ${f(ao(a, 5))} · ao12 ${f(ao(a, 12))}`;
+    $('lista').innerHTML = a.slice(0, 5).map(t => `<li>${txt(t)}</li>`).join('');
+    grafica(); render();
+  }
+  function tabs() {
+    const box = $('tabs'); box.innerHTML = '';
+    CATS.forEach(c => {
+      const b = document.createElement('button');
+      b.textContent = c; b.className = c === cat ? 'on' : '';
+      b.onclick = () => { cat = c; tabs(); mezcla(); pintar(); };
+      box.appendChild(b);
+    });
+  }
+  const LINKS = [['hist', 'Historial'], ['stats', 'Estadísticas'], ['alg', 'Algoritmos'], ['aj', 'Ajustes'], ['bk', 'Copia de seguridad'], ['clr', 'Borrar récords']];
+  $('links').innerHTML = LINKS.map(([k, t]) => `<button class="s" data-k="${k}">${t}</button>`).join('');
+  const PANELS = {
+    hist: () => `<div class="l">${datos.c[cat].map((t, i) => `<div class="h"><span>${datos.c[cat].length - i}. ${txt(t)}</span><span>` +
+      ['p2:+2', 'pd:DNF', 'px:×'].map(s => `<button class="b" data-k="${s.split(':')[0]}" data-i="${i}">${s.split(':')[1]}</button>`).join('') +
+      '</span></div>').join('') || 'Aún no hay tiempos'}</div>`,
+    stats: () => {
+      const a = datos.c[cat], now = Date.now();
+      const sem = ['Esta semana', 'Hace 1 semana', 'Hace 2 semanas', 'Hace 3 semanas'].map((l, w) => {
+        const s = a.filter(t => t.d && Math.floor((now - t.d) / 6048e5) === w);
+        return `<div>${l}: ${s.length} · media ${f(media(s))}</div>`;
+      }).join('');
+      return `<div>Total: ${a.length} · Media: ${f(media(a))}</div><div>Mejor ao5: ${f(mejorAo(a, 5))} · Mejor ao12: ${f(mejorAo(a, 12))}</div><p>${sem}</p>`;
+    },
+    alg: () => `<div class="an">${ALGS[ai][0]}</div><div class="ax">${ashow ? ALGS[ai][1] : 'Piensa cómo era y luego toca Mostrar'}</div>` +
+      '<button class="b" data-k="am">Mostrar</button><button class="b" data-k="an">Siguiente</button>',
+    aj: () => `<button class="b" data-k="ai">Inspección: ${g.i ? g.i + ' s' : 'sin inspección'}</button>
+      <button class="b" data-k="ah">Inicio: ${g.k ? 'mantener y soltar' : 'tocar'}</button>
+      <button class="b" data-k="az">Tamaño del tiempo: ${['pequeño', 'normal', 'grande'][[.8, 1, 1.3].indexOf(g.z)]}</button>
+      <button class="b" data-k="at">Tema: ${g.t ? 'oscuro' : 'claro'}</button>
+      <button class="b" data-k="as">Sonido: ${datos.s ? 'sí' : 'no'}</button>`,
+    bk: () => '<textarea id="bk"></textarea><button class="b" data-k="bc">Copiar</button><button class="b" data-k="bi">Importar</button>'
+  };
+  function render() {
+    $('panel').innerHTML = pa ? PANELS[pa]() : '';
+    if (pa === 'bk') $('bk').value = JSON.stringify(datos);
+  }
+  const sig = (arr, v) => arr[(arr.indexOf(v) + 1) % arr.length];
+  const ACC = {
+    ai: () => { g.i = sig([15, 10, 5, 0], g.i); }, ah: () => { g.k = g.k ? 0 : 1; },
+    az: () => { g.z = sig([.8, 1, 1.3], g.z); }, at: () => { g.t = g.t ? 0 : 1; }, as: () => { datos.s = datos.s ? 0 : 1; },
+    am: () => { ashow = true; }, an: () => { let j; do { j = Math.floor(Math.random() * ALGS.length); } while (j === ai); ai = j; ashow = false; },
+    bc: async () => {
+      try { await navigator.clipboard.writeText($('bk').value); alert('Copiado. Pégalo en un lugar seguro (notas, WhatsApp...)'); }
+      catch (e) { $('bk').select(); alert('Mantén presionado el texto para copiarlo'); }
+    },
+    bi: () => {
+      try { const d = JSON.parse($('bk').value); if (!d || typeof d.c !== 'object') throw 0; aplicar(d); alert('Récords importados'); }
+      catch (e) { alert('El texto no es válido'); }
+    }
+  };
+  $('links').onclick = e => {
+    const k = e.target.dataset.k; if (!k) return;
+    if (k === 'clr') { if (confirm(`¿Borrar todos los récords de ${cat}?`)) { datos.c[cat] = []; guardar(); pintar(); } return; }
+    pa = pa === k ? '' : k; render();
+  };
+  $('panel').onclick = e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const k = b.dataset.k, a = datos.c[cat], i = +b.dataset.i;
+    if (k === 'p2' || k === 'pd') a[i].p = a[i].p === (k === 'p2' ? 2 : 'D') ? 0 : (k === 'p2' ? 2 : 'D');
+    else if (k === 'px') a.splice(i, 1);
+    else ACC[k]?.();
+    guardar(); cfg(); pintar(); cfg();
+  };
+
+  /* ---------- flujo ---------- */
+  function setEstado(e, m) { estado = e; body.className = e === 'idle' ? '' : e; msgEl.textContent = m; }
+  function inspeccion() {
+    setEstado('insp', g.k ? 'Inspecciona. Mantén y suelta para resolver' : 'Inspecciona. Toca para resolver');
+    t0 = performance.now(); let a8 = false, a12 = false;
+    const tick = () => {
+      const resta = g.i - (performance.now() - t0) / 1000;
+      if (resta <= 0) return resolver();
+      timeEl.textContent = Math.ceil(resta);
+      if (!a8 && g.i >= 12 && resta <= g.i - 8) { a8 = true; aviso('8 segundos', 660); }
+      if (!a12 && g.i >= 15 && resta <= g.i - 12) { a12 = true; aviso('12 segundos', 880); }
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+  }
+  function resolver() {
+    cancelAnimationFrame(raf); clearTimeout(holdT); holding = ready = false; delete body.dataset.hold;
+    try { speechSynthesis.cancel(); } catch (e) {}
+    setEstado('run', `Resolviendo ${cat}... toca para parar`); vibrar(200);
+    t0 = performance.now();
+    const tick = () => { timeEl.textContent = f(performance.now() - t0); raf = requestAnimationFrame(tick); };
+    tick();
+  }
+  function parar() {
+    cancelAnimationFrame(raf);
+    const ms = performance.now() - t0, a = datos.c[cat], antes = mejor(a);
+    datos.c[cat] = [{ ms, p: 0, d: Date.now() }, ...a].slice(0, MAXH); guardar();
+    setEstado('done', ((antes === null || ms < antes) ? '¡Nuevo récord! ' : '') + 'Toca para reiniciar');
+    timeEl.textContent = f(ms); pintar(); vibrar(200);
+  }
+  function reiniciar() { timeEl.textContent = '0.00'; setEstado('idle', msgIdle()); mezcla(); pintar(); }
+  function penalizar(p) {
+    const l = datos.c[cat][0]; if (!l || estado !== 'done') return;
+    l.p = l.p === p ? 0 : p; timeEl.textContent = txt(l); msgEl.textContent = 'Toca para reiniciar'; guardar(); pintar();
+  }
+  $('bP2').onclick = () => penalizar(2);
+  $('bDnf').onclick = () => penalizar('D');
+  $('bDel').onclick = () => {
+    if (estado !== 'done' || !datos.c[cat].length) return;
+    datos.c[cat].shift(); guardar(); pintar(); timeEl.textContent = '0.00'; msgEl.textContent = 'Último tiempo borrado. Toca para reiniciar';
+  };
+
+  /* ---------- toques ---------- */
+  function act() {
+    audioInit();
+    if (estado === 'idle') g.i ? inspeccion() : resolver();
+    else if (estado === 'insp') resolver();
+    else if (estado === 'run') parar();
+    else reiniciar();
+  }
+  document.addEventListener('contextmenu', e => e.preventDefault());
+  const puedeEmpezar = () => estado === 'insp' || (estado === 'idle' && !g.i);
+  document.addEventListener('pointerdown', e => {
+    swallow = false;
+    if (e.target.closest('[data-no-tap]')) return;
+    if (estado === 'run') { swallow = true; act(); return; }
+    if (!puedeEmpezar()) return;
+    swallow = true; audioInit();
+    if (!g.k) return act();
+    holding = true; ready = false; body.dataset.hold = 'wait';
+    holdT = setTimeout(() => { ready = true; body.dataset.hold = 'ready'; }, 300);
+  });
+  const soltar = () => {
+    if (!holding) return;
+    clearTimeout(holdT); holding = false; delete body.dataset.hold;
+    if (ready && puedeEmpezar()) { ready = false; resolver(); }
+  };
+  document.addEventListener('pointerup', soltar);
+  document.addEventListener('pointercancel', soltar);
+  document.addEventListener('click', e => {
+    if (swallow) { swallow = false; return; }
+    if ((estado !== 'idle' && estado !== 'done') || e.target.closest('[data-no-tap]')) return;
+    act();
+  });
+
+  cargar(); cfg(); tabs(); mezcla(); pintar();
+})();
+</script>
+</body>
+</html>
